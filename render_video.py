@@ -31,7 +31,6 @@ else:
 # --- FIX END ---
 
 total_chars = sum(len(s['text']) for s in scenes_data)
-video_clips = []
 audio_clips = [voiceover]
 headers = {"Authorization": pexels_key}
 current_time = 0.0
@@ -44,6 +43,10 @@ except:
 
 viral_colors = ['#FFD400', '#00FFFF', '#FFFFFF', '#39FF14'] 
 TARGET_W, TARGET_H = 1920, 1080
+
+# Initialize the text file for FFmpeg concatenation
+if os.path.exists("concat_list.txt"):
+    os.remove("concat_list.txt")
 
 for i, scene in enumerate(scenes_data):
     keyword = scene.get('keyword', 'nature')
@@ -83,7 +86,22 @@ for i, scene in enumerate(scenes_data):
             word_clips.extend([bg_txt, main_txt])
         
         final_scene = CompositeVideoClip([zoomed_clip, dark_overlay] + word_clips, size=(TARGET_W, TARGET_H)).set_duration(scene_duration)
-        video_clips.append(final_scene)
+        
+        # --- OOM FIX: Render intermediate scene directly to disk ---
+        scene_filename = f"scene_{i}.mp4"
+        final_scene.write_videofile(scene_filename, fps=24, codec="libx264", preset="ultrafast", audio=False, logger=None)
+        
+        # Log the file for FFmpeg
+        with open("concat_list.txt", "a") as f:
+            f.write(f"file '{scene_filename}'\n")
+
+        # --- OOM FIX: Explicitly destroy objects to flush RAM ---
+        final_scene.close()
+        zoomed_clip.close()
+        dark_overlay.close()
+        clip.close()
+        for w in word_clips:
+            w.close()
         
         if whoosh_sfx: audio_clips.append(whoosh_sfx.set_start(current_time))
         if pop_sfx: audio_clips.append(pop_sfx.set_start(current_time + 0.1))
@@ -93,7 +111,12 @@ for i, scene in enumerate(scenes_data):
     except Exception as e:
         print(f"Error on scene {i}: {e}")
 
-final_video = concatenate_videoclips(video_clips, method="compose")
+# --- OOM FIX: Stitch the dumped files instantly using FFmpeg (Zero RAM usage) ---
+print("Concatenating scenes via FFmpeg...")
+subprocess.run(["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", "concat_list.txt", "-c", "copy", "raw_concatenated.mp4"], check=True)
+
+# Load the single stitched video back into MoviePy for final overlays
+final_video = VideoFileClip("raw_concatenated.mp4")
 
 final_duration = final_video.duration
 progress_bar = ColorClip(size=(TARGET_W, 15), color=(255, 0, 0))
