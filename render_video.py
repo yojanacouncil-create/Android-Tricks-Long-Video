@@ -5,7 +5,7 @@ import moviepy.editor as mpe
 from moviepy.editor import VideoFileClip, AudioFileClip, ColorClip, CompositeVideoClip, ImageClip, TextClip
 import moviepy.video.fx.all as vfx
 
-# 🛡️ HACKER TRICK: Force IPv4 to bypass Hostinger blocks
+# 🛡️ HACKER TRICK: Force IPv4
 def allowed_gai_family():
     return socket.AF_INET
 urllib3_cn.allowed_gai_family = allowed_gai_family
@@ -32,6 +32,7 @@ last_successful_media = None
 print(f"Total Scenes to render: {len(scenes_data)}")
 
 def get_pexels_video(query):
+    if not pexels_key or len(pexels_key) < 5: return None
     try:
         search_terms = [query, query.split(" ")[-1] if " " in query else query, "smartphone", "technology"]
         for term in search_terms:
@@ -79,25 +80,32 @@ for i, scene in enumerate(scenes_data):
 
     audio_files.append(final_audio_path)
 
-    # --- 2. Visual Pipeline ---
+    # --- 2. Visual Background Engine (ISOLATED) ---
     video_url = get_pexels_video(keyword)
     norm_video_path = f"video_{i}.mp4"
     raw_media_path = f"raw_media_{i}.mp4"
-    word_clips = []
+    z_clip = None
     
     try:
         if video_url:
-            req = requests.get(video_url, timeout=45)
-            with open(raw_media_path, "wb") as f: f.write(req.content)
-            vclip = VideoFileClip(raw_media_path).fx(vfx.speedx, 1.2)
-            vclip = vclip.fx(vfx.loop, duration=scene_duration) if vclip.duration < scene_duration else vclip.subclip(0, scene_duration)
-            last_successful_media = {"type": "video", "path": raw_media_path}
+            req = requests.get(video_url, timeout=30)
+            if req.status_code == 200:
+                with open(raw_media_path, "wb") as f: f.write(req.content)
+                vclip = VideoFileClip(raw_media_path).fx(vfx.speedx, 1.2)
+                vclip = vclip.fx(vfx.loop, duration=scene_duration) if vclip.duration < scene_duration else vclip.subclip(0, scene_duration)
+                last_successful_media = {"type": "video", "path": raw_media_path}
+            else:
+                raise Exception("Pexels Request Failed")
         else:
             raw_media_path = f"raw_media_{i}.jpg"
             img_url = f"https://image.pollinations.ai/prompt/{urllib.parse.quote(f'Cinematic concept art, {image_prompt}, 8k, Unreal Engine 5')}?width=1920&height=1080&nologo=true"
-            with open(raw_media_path, "wb") as f: f.write(requests.get(img_url, timeout=45).content)
-            vclip = ImageClip(raw_media_path).set_duration(scene_duration)
-            last_successful_media = {"type": "image", "path": raw_media_path}
+            req = requests.get(img_url, timeout=30)
+            if req.status_code == 200:
+                with open(raw_media_path, "wb") as f: f.write(req.content)
+                vclip = ImageClip(raw_media_path).set_duration(scene_duration)
+                last_successful_media = {"type": "image", "path": raw_media_path}
+            else:
+                raise Exception("Pollinations Request Failed")
 
         vclip = vclip.resize(height=TARGET_H) if (vclip.w / vclip.h) > (TARGET_W / TARGET_H) else vclip.resize(width=TARGET_W)
         vclip = vclip.crop(x_center=vclip.w/2, y_center=vclip.h/2, width=TARGET_W, height=TARGET_H)
@@ -105,8 +113,21 @@ for i, scene in enumerate(scenes_data):
         motion_type = random.choice(['zoom_in', 'zoom_out'])
         zoom_factor = 1.05 
         z_clip = vclip.resize(lambda t: 1.0 + (zoom_factor - 1.0) * (t / scene_duration)).set_position(('center', 'center')) if motion_type == 'zoom_in' else vclip.resize(lambda t: zoom_factor - (zoom_factor - 1.0) * (t / scene_duration)).set_position(('center', 'center'))
+    except Exception as e:
+        print(f"Background Fetch Failed: {e}")
+        # 🔥 FIX: Agar internet fail ho jaye, tab bhi black screen nahi aayegi 🔥
+        if last_successful_media and os.path.exists(last_successful_media["path"]):
+            try:
+                vclip = VideoFileClip(last_successful_media["path"]).fx(vfx.loop, duration=scene_duration) if last_successful_media["type"] == "video" else ImageClip(last_successful_media["path"]).set_duration(scene_duration)
+                vclip = vclip.resize(height=TARGET_H).crop(x_center=vclip.w/2, y_center=vclip.h/2, width=TARGET_W, height=TARGET_H)
+                z_clip = vclip.resize(lambda t: 1.02 - 0.02 * (t / scene_duration)).set_position(('center', 'center'))
+            except: z_clip = ColorClip(size=(TARGET_W, TARGET_H), color=(15, 20, 30)).set_duration(scene_duration)
+        else:
+            z_clip = ColorClip(size=(TARGET_W, TARGET_H), color=(15, 20, 30)).set_duration(scene_duration)
 
-        # 🔥 UPGRADE 1: FLASH-BANG TRANSITION (Start of scene) 🔥
+    # --- 3. Text Engine & Compositing (GUARANTEED EXECUTION) ---
+    try:
+        word_clips = []
         flash_clip = ColorClip(size=(TARGET_W, TARGET_H), color=(255,255,255)).set_duration(scene_duration).set_opacity(lambda t: max(0, 1.0 - (t / 0.15)))
 
         def advanced_punch_anim(t):
@@ -133,9 +154,7 @@ for i, scene in enumerate(scenes_data):
                 is_danger = any(kw in word_lower for kw in ['secret', 'trick', 'hidden', 'scam', 'khatarnaak', 'danger', 'alert', 'mat'])
                 is_highlight = not is_danger and len(word) > 5
                 
-                # Record timestamps for dynamic background dimming
-                if is_danger or is_highlight:
-                    danger_timestamps.append((w_i * duration_per_word, (w_i + 1) * duration_per_word))
+                if is_danger or is_highlight: danger_timestamps.append((w_i * duration_per_word, (w_i + 1) * duration_per_word))
 
                 current_color = '#FF003C' if is_danger else ('#000000' if is_highlight else '#FFFFFF')
                 bg_color = 'transparent' if is_danger else (random.choice(['#FFD400', '#39FF14']) if is_highlight else 'transparent')
@@ -156,28 +175,24 @@ for i, scene in enumerate(scenes_data):
                         word_clips.append(main_txt)
                 except: pass
 
-        # 🔥 UPGRADE 2: DYNAMIC FOCUS PULL (Background Darkens on important words) 🔥
         def dynamic_opacity(t):
             for start, end in danger_timestamps:
-                if start <= t <= end:
-                    return 0.65  # Darker background to pop the text
-            return 0.35  # Normal background
+                if start <= t <= end: return 0.65 
+            return 0.35 
             
         dark_overlay = ColorClip(size=(TARGET_W, TARGET_H), color=(0,0,0)).set_duration(scene_duration).set_opacity(dynamic_opacity)
 
-        # 🔥 UPGRADE 3: MULTI-THREADING RENDER (Fast preset + 4 Threads) 🔥
         final_scene = CompositeVideoClip([z_clip, dark_overlay, flash_clip] + word_clips, size=(TARGET_W, TARGET_H)).set_duration(scene_duration)
         final_scene.write_videofile(norm_video_path, fps=24, codec="libx264", audio=False, preset="ultrafast", threads=4, ffmpeg_params=['-pix_fmt', 'yuv420p', '-vf', 'setsar=1'], logger=None)
 
     except Exception as e:
-        print(f"Error on scene {i}: {e}")
+        print(f"Final composite failed: {e}")
         cclip = ColorClip(size=(TARGET_W, TARGET_H), color=(30, 30, 30)).set_duration(scene_duration)
         cclip.write_videofile(norm_video_path, fps=24, codec="libx264", audio=False, preset="ultrafast", threads=4, ffmpeg_params=['-pix_fmt', 'yuv420p', '-vf', 'setsar=1'], logger=None)
         cclip.close()
 
     try:
-        vclip.close()
-        z_clip.close()
+        if z_clip: z_clip.close()
         dark_overlay.close()
         flash_clip.close()
         final_scene.close()
@@ -187,7 +202,7 @@ for i, scene in enumerate(scenes_data):
     video_files.append(norm_video_path)
     gc.collect()
 
-# --- 3. High-Speed FFmpeg Concat ---
+# --- 4. High-Speed FFmpeg Concat ---
 with open("vid_list.txt", "w") as f:
     for vid in video_files: f.write(f"file '{vid}'\n")
 
@@ -197,7 +212,7 @@ with open("aud_list.txt", "w") as f:
 subprocess.run(['ffmpeg', '-y', '-f', 'concat', '-safe', '0', '-i', 'vid_list.txt', '-c', 'copy', 'merged_video.mp4'], check=True)
 subprocess.run(['ffmpeg', '-y', '-f', 'concat', '-safe', '0', '-i', 'aud_list.txt', '-c', 'copy', 'merged_audio.wav'], check=True)
 
-# --- 4. Final Master Mix ---
+# --- 5. Final Master Mix ---
 has_logo = os.path.exists("logo.png")
 has_bgm = os.path.exists("bgm.mp3")
 
@@ -237,7 +252,7 @@ ffmpeg_cmd.extend([
 ])
 subprocess.run(ffmpeg_cmd, check=True)
 
-# --- 5. Upload System ---
+# --- 6. Upload System ---
 video_link = "Upload Failed"
 for upload_url in [
     "https://0x0.st", 
@@ -253,7 +268,7 @@ for upload_url in [
             else: res = requests.post(upload_url, files={'file': open('final_video.mp4', 'rb')}, timeout=600); video_link = res.text.strip() if res.text.startswith("http") else video_link
         except: pass
 
-# --- 6. Notification ---
+# --- 7. Notification ---
 payload = {"chat_id": chat_id, "message": "👑 Bhai! Android Tricks Long Video Ready! 🔥", "youtube_url": video_link}
 safe_headers = {'User-Agent': 'Mozilla/5.0 Chrome/123.0.0.0 Safari/537.36', 'Accept': 'application/json'}
 
