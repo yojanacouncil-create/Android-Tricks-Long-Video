@@ -33,44 +33,39 @@ print(f"Total Scenes to render: {len(scenes_data)}")
 
 def get_pexels_video(query):
     try:
-        res = requests.get(f"https://api.pexels.com/videos/search?query={query}&per_page=15&orientation=landscape", headers={"Authorization": pexels_key}, timeout=15).json()
-        if res.get('videos'):
-            for v in res['videos']:
-                url = v['video_files'][0]['link']
-                if url not in used_videos:
-                    used_videos.add(url)
-                    return url
-            return res['videos'][0]['video_files'][0]['link']
-    except:
-        return None
+        search_terms = [query, query.split(" ")[-1] if " " in query else query, "smartphone", "technology"]
+        for term in search_terms:
+            res = requests.get(f"https://api.pexels.com/videos/search?query={urllib.parse.quote(term)}&per_page=15&orientation=landscape", headers={"Authorization": pexels_key}, timeout=15).json()
+            if res.get('videos'):
+                for v in res['videos']:
+                    high_res_files = sorted(v['video_files'], key=lambda x: x.get('width', 0), reverse=True)
+                    for vf in high_res_files:
+                        if vf['link'] not in used_videos:
+                            used_videos.add(vf['link'])
+                            return vf['link']
+    except: pass
+    return None
 
 for i, scene in enumerate(scenes_data):
     keyword = scene.get('keyword', 'smartphone').strip()
     image_prompt = scene.get('image_prompt', keyword).strip()
     text_line = scene.get('text', ' ').strip() or " "
 
-    # --- 1. BULLETPROOF AUDIO PIPELINE ---
+    # --- 1. Audio Pipeline ---
     raw_audio_path = f"raw_audio_{i}.mp3"
     norm_audio_path = f"audio_{i}.wav"
-    
-    try:
-        subprocess.run(['edge-tts', '--voice', 'hi-IN-MadhurNeural', '--text', text_line, '--write-media', raw_audio_path], check=False)
-    except Exception as e:
-        print(f"TTS Engine Warning for scene {i}: {e}")
+    subprocess.run(['edge-tts', '--voice', 'hi-IN-MadhurNeural', '--text', text_line, '--write-media', raw_audio_path], check=False)
 
-    # 🔥 FIX: Check file exists AND size > 0 bytes to prevent FFmpeg crashes
     if os.path.exists(raw_audio_path) and os.path.getsize(raw_audio_path) > 100:
         try:
             audio_filter = "silenceremove=stop_periods=-1:stop_duration=0.3:stop_threshold=-35dB,bass=g=5:f=110,treble=g=3:f=8000"
             subprocess.run(['ffmpeg', '-y', '-i', raw_audio_path, '-af', audio_filter, '-ar', '44100', '-ac', '2', norm_audio_path], check=True)
             out = subprocess.check_output(['ffprobe', '-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', norm_audio_path])
             scene_duration = float(out.decode('utf-8').strip()) + 0.2 
-        except Exception as e:
-            print(f"FFmpeg processing failed for scene {i}: {e}")
+        except:
             scene_duration = 3.0
             subprocess.run(['ffmpeg', '-y', '-f', 'lavfi', '-i', 'anullsrc=r=44100:cl=stereo', '-t', str(scene_duration), norm_audio_path], check=True)
     else:
-        print(f"Empty or missing TTS audio for scene {i}. Generating silent fallback.")
         scene_duration = 3.0
         subprocess.run(['ffmpeg', '-y', '-f', 'lavfi', '-i', 'anullsrc=r=44100:cl=stereo', '-t', str(scene_duration), norm_audio_path], check=True)
 
@@ -80,8 +75,7 @@ for i, scene in enumerate(scenes_data):
         try:
             subprocess.run(['ffmpeg', '-y', '-i', norm_audio_path, '-i', 'whoosh.mp3', '-filter_complex', '[0:a][1:a]amix=inputs=2:duration=first:dropout_transition=0[aout]', '-map', '[aout]', '-ar', '44100', '-ac', '2', mixed_audio], check=True)
             final_audio_path = mixed_audio
-        except:
-            pass
+        except: pass
 
     audio_files.append(final_audio_path)
 
@@ -96,31 +90,24 @@ for i, scene in enumerate(scenes_data):
             req = requests.get(video_url, timeout=45)
             with open(raw_media_path, "wb") as f: f.write(req.content)
             vclip = VideoFileClip(raw_media_path).fx(vfx.speedx, 1.2)
-            if vclip.duration < scene_duration:
-                vclip = vclip.fx(vfx.loop, duration=scene_duration)
-            else:
-                vclip = vclip.subclip(0, scene_duration)
+            vclip = vclip.fx(vfx.loop, duration=scene_duration) if vclip.duration < scene_duration else vclip.subclip(0, scene_duration)
             last_successful_media = {"type": "video", "path": raw_media_path}
         else:
             raw_media_path = f"raw_media_{i}.jpg"
-            ai_prompt_encoded = urllib.parse.quote(f"Epic cinematic concept art, {image_prompt}, highly detailed, 8k resolution, Unreal Engine 5 render, dramatic contrast, pure textless photograph")
-            img_url = f"https://image.pollinations.ai/prompt/{ai_prompt_encoded}?width=1920&height=1080&nologo=true"
+            img_url = f"https://image.pollinations.ai/prompt/{urllib.parse.quote(f'Cinematic concept art, {image_prompt}, 8k, Unreal Engine 5')}?width=1920&height=1080&nologo=true"
             with open(raw_media_path, "wb") as f: f.write(requests.get(img_url, timeout=45).content)
             vclip = ImageClip(raw_media_path).set_duration(scene_duration)
             last_successful_media = {"type": "image", "path": raw_media_path}
 
-        if (vclip.w / vclip.h) > (TARGET_W / TARGET_H):
-            vclip = vclip.resize(height=TARGET_H)
-        else:
-            vclip = vclip.resize(width=TARGET_W)
+        vclip = vclip.resize(height=TARGET_H) if (vclip.w / vclip.h) > (TARGET_W / TARGET_H) else vclip.resize(width=TARGET_W)
         vclip = vclip.crop(x_center=vclip.w/2, y_center=vclip.h/2, width=TARGET_W, height=TARGET_H)
         
         motion_type = random.choice(['zoom_in', 'zoom_out'])
         zoom_factor = 1.05 
-        if motion_type == 'zoom_in':
-            z_clip = vclip.resize(lambda t: 1.0 + (zoom_factor - 1.0) * (t / scene_duration)).set_position(('center', 'center'))
-        else:
-            z_clip = vclip.resize(lambda t: zoom_factor - (zoom_factor - 1.0) * (t / scene_duration)).set_position(('center', 'center'))
+        z_clip = vclip.resize(lambda t: 1.0 + (zoom_factor - 1.0) * (t / scene_duration)).set_position(('center', 'center')) if motion_type == 'zoom_in' else vclip.resize(lambda t: zoom_factor - (zoom_factor - 1.0) * (t / scene_duration)).set_position(('center', 'center'))
+
+        # 🔥 UPGRADE 1: FLASH-BANG TRANSITION (Start of scene) 🔥
+        flash_clip = ColorClip(size=(TARGET_W, TARGET_H), color=(255,255,255)).set_duration(scene_duration).set_opacity(lambda t: max(0, 1.0 - (t / 0.15)))
 
         def advanced_punch_anim(t):
             if t < 0.06: return 1.6 - 10.0 * t  
@@ -131,79 +118,68 @@ for i, scene in enumerate(scenes_data):
             def pos(t):
                 idle_y = 7 * math.sin(t * 8 + word_idx)
                 idle_x = 4 * math.cos(t * 6 + word_idx)
-                
                 if is_shaking and t > 0.06:
-                    shake_x = 5 * math.sin(t * 75)
-                    shake_y = 5 * math.cos(t * 85)
-                    return (TARGET_W/2 + shake_x + idle_x, base_y + shake_y + idle_y)
-                
+                    return (TARGET_W/2 + 5 * math.sin(t * 75) + idle_x, base_y + 5 * math.cos(t * 85) + idle_y)
                 return (TARGET_W/2 + idle_x, base_y + idle_y)
             return pos
 
-        dark_overlay = ColorClip(size=(TARGET_W, TARGET_H), color=(0,0,0)).set_opacity(0.38).set_duration(scene_duration)
-        
         words = text_line.split()
-        
+        danger_timestamps = []
+
         if words:
             duration_per_word = scene_duration / max(len(words), 1)
             for w_i, word in enumerate(words):
-                
                 word_lower = word.lower()
                 is_danger = any(kw in word_lower for kw in ['secret', 'trick', 'hidden', 'scam', 'khatarnaak', 'danger', 'alert', 'mat'])
                 is_highlight = not is_danger and len(word) > 5
                 
-                if is_danger:
-                    current_color = '#FF003C' 
-                    base_size = 155
-                    bg_color = 'transparent'
-                elif is_highlight:
-                    current_color = '#000000' 
-                    bg_color = random.choice(['#FFD400', '#39FF14']) 
-                    base_size = 140
-                else:
-                    current_color = '#FFFFFF' 
-                    base_size = 90
-                    bg_color = 'transparent'
+                # Record timestamps for dynamic background dimming
+                if is_danger or is_highlight:
+                    danger_timestamps.append((w_i * duration_per_word, (w_i + 1) * duration_per_word))
+
+                current_color = '#FF003C' if is_danger else ('#000000' if is_highlight else '#FFFFFF')
+                bg_color = 'transparent' if is_danger else (random.choice(['#FFD400', '#39FF14']) if is_highlight else 'transparent')
+                base_size = 155 if is_danger else (140 if is_highlight else 90)
 
                 try:
                     text_y_pos = TARGET_H * 0.75 
                     position_filter = get_kinetic_pos(text_y_pos, is_danger, w_i)
 
                     if bg_color == 'transparent':
-                        shadow_txt = TextClip(word, fontsize=base_size, color='black', font=HINDI_FONT_FILE, method='caption', size=(1500, None))
-                        shadow_txt = shadow_txt.resize(advanced_punch_anim).set_position(get_kinetic_pos(text_y_pos + 15, is_danger, w_i)).set_duration(duration_per_word).set_start(w_i * duration_per_word)
-                        
-                        bg_txt = TextClip(word, fontsize=base_size, color='black', font=HINDI_FONT_FILE, stroke_color='black', stroke_width=16, method='caption', size=(1500, None))
-                        bg_txt = bg_txt.resize(advanced_punch_anim).set_position(position_filter).set_duration(duration_per_word).set_start(w_i * duration_per_word)
-                        
-                        inner_border_txt = TextClip(word, fontsize=base_size, color='black', font=HINDI_FONT_FILE, stroke_color='white', stroke_width=4, method='caption', size=(1500, None))
-                        inner_border_txt = inner_border_txt.resize(advanced_punch_anim).set_position(position_filter).set_duration(duration_per_word).set_start(w_i * duration_per_word)
-                        
-                        main_txt = TextClip(word, fontsize=base_size, color=current_color, font=HINDI_FONT_FILE, method='caption', size=(1500, None))
-                        main_txt = main_txt.resize(advanced_punch_anim).set_position(position_filter).set_duration(duration_per_word).set_start(w_i * duration_per_word)
-                        
+                        shadow_txt = TextClip(word, fontsize=base_size, color='black', font=HINDI_FONT_FILE, method='caption', size=(1500, None)).resize(advanced_punch_anim).set_position(get_kinetic_pos(text_y_pos + 15, is_danger, w_i)).set_duration(duration_per_word).set_start(w_i * duration_per_word)
+                        bg_txt = TextClip(word, fontsize=base_size, color='black', font=HINDI_FONT_FILE, stroke_color='black', stroke_width=16, method='caption', size=(1500, None)).resize(advanced_punch_anim).set_position(position_filter).set_duration(duration_per_word).set_start(w_i * duration_per_word)
+                        inner_border_txt = TextClip(word, fontsize=base_size, color='black', font=HINDI_FONT_FILE, stroke_color='white', stroke_width=4, method='caption', size=(1500, None)).resize(advanced_punch_anim).set_position(position_filter).set_duration(duration_per_word).set_start(w_i * duration_per_word)
+                        main_txt = TextClip(word, fontsize=base_size, color=current_color, font=HINDI_FONT_FILE, method='caption', size=(1500, None)).resize(advanced_punch_anim).set_position(position_filter).set_duration(duration_per_word).set_start(w_i * duration_per_word)
                         word_clips.extend([shadow_txt, bg_txt, inner_border_txt, main_txt])
                     else:
-                        main_txt = TextClip(word, fontsize=base_size, color=current_color, bg_color=bg_color, font=HINDI_FONT_FILE, method='caption', size=(None, None))
-                        main_txt = main_txt.resize(advanced_punch_anim).set_position(position_filter).set_duration(duration_per_word).set_start(w_i * duration_per_word)
+                        main_txt = TextClip(word, fontsize=base_size, color=current_color, bg_color=bg_color, font=HINDI_FONT_FILE, method='caption', size=(None, None)).resize(advanced_punch_anim).set_position(position_filter).set_duration(duration_per_word).set_start(w_i * duration_per_word)
                         word_clips.append(main_txt)
+                except: pass
 
-                except Exception as e:
-                    pass
+        # 🔥 UPGRADE 2: DYNAMIC FOCUS PULL (Background Darkens on important words) 🔥
+        def dynamic_opacity(t):
+            for start, end in danger_timestamps:
+                if start <= t <= end:
+                    return 0.65  # Darker background to pop the text
+            return 0.35  # Normal background
+            
+        dark_overlay = ColorClip(size=(TARGET_W, TARGET_H), color=(0,0,0)).set_duration(scene_duration).set_opacity(dynamic_opacity)
 
-        final_scene = CompositeVideoClip([z_clip, dark_overlay] + word_clips, size=(TARGET_W, TARGET_H)).set_duration(scene_duration)
-        final_scene.write_videofile(norm_video_path, fps=24, codec="libx264", audio=False, preset="ultrafast", ffmpeg_params=['-pix_fmt', 'yuv420p', '-vf', 'setsar=1'], logger=None)
+        # 🔥 UPGRADE 3: MULTI-THREADING RENDER (Fast preset + 4 Threads) 🔥
+        final_scene = CompositeVideoClip([z_clip, dark_overlay, flash_clip] + word_clips, size=(TARGET_W, TARGET_H)).set_duration(scene_duration)
+        final_scene.write_videofile(norm_video_path, fps=24, codec="libx264", audio=False, preset="ultrafast", threads=4, ffmpeg_params=['-pix_fmt', 'yuv420p', '-vf', 'setsar=1'], logger=None)
 
     except Exception as e:
         print(f"Error on scene {i}: {e}")
         cclip = ColorClip(size=(TARGET_W, TARGET_H), color=(30, 30, 30)).set_duration(scene_duration)
-        cclip.write_videofile(norm_video_path, fps=24, codec="libx264", audio=False, preset="ultrafast", ffmpeg_params=['-pix_fmt', 'yuv420p', '-vf', 'setsar=1'], logger=None)
+        cclip.write_videofile(norm_video_path, fps=24, codec="libx264", audio=False, preset="ultrafast", threads=4, ffmpeg_params=['-pix_fmt', 'yuv420p', '-vf', 'setsar=1'], logger=None)
         cclip.close()
 
     try:
         vclip.close()
         z_clip.close()
         dark_overlay.close()
+        flash_clip.close()
         final_scene.close()
         for w in word_clips: w.close()
     except: pass
@@ -263,22 +239,19 @@ subprocess.run(ffmpeg_cmd, check=True)
 
 # --- 5. Upload System ---
 video_link = "Upload Failed"
-
-if not video_link.startswith("http"):
-    try: res = requests.post("https://0x0.st", files={'file': open('final_video.mp4', 'rb')}, timeout=600); video_link = res.text.strip() if res.text.startswith("http") else video_link
-    except: pass
-
-if not video_link.startswith("http"):
-    try: res = requests.post("https://uguu.se/upload.php", files={'files[]': open('final_video.mp4', 'rb')}, timeout=600); video_link = res.json()['files'][0]['url'] if res.status_code == 200 else video_link
-    except: pass
-
-if not video_link.startswith("http"):
-    try: res = requests.post("https://tmpfiles.org/api/v1/upload", files={'file': open('final_video.mp4', 'rb')}, timeout=600); video_link = res.json()['data']['url'].replace('tmpfiles.org/', 'tmpfiles.org/dl/') if res.status_code == 200 else video_link
-    except: pass
-
-if not video_link.startswith("http"):
-    try: res = requests.post("https://catbox.moe/user/api.php", data={'reqtype': 'fileupload'}, files={'fileToUpload': open('final_video.mp4', 'rb')}, timeout=600); video_link = res.text.strip() if res.text.startswith("http") else video_link
-    except: pass
+for upload_url in [
+    "https://0x0.st", 
+    "https://uguu.se/upload.php", 
+    "https://tmpfiles.org/api/v1/upload", 
+    "https://catbox.moe/user/api.php"
+]:
+    if not video_link.startswith("http"):
+        try:
+            if "uguu.se" in upload_url: res = requests.post(upload_url, files={'files[]': open('final_video.mp4', 'rb')}, timeout=600); video_link = res.json()['files'][0]['url'] if res.status_code == 200 else video_link
+            elif "tmpfiles" in upload_url: res = requests.post(upload_url, files={'file': open('final_video.mp4', 'rb')}, timeout=600); video_link = res.json()['data']['url'].replace('tmpfiles.org/', 'tmpfiles.org/dl/') if res.status_code == 200 else video_link
+            elif "catbox" in upload_url: res = requests.post(upload_url, data={'reqtype': 'fileupload'}, files={'fileToUpload': open('final_video.mp4', 'rb')}, timeout=600); video_link = res.text.strip() if res.text.startswith("http") else video_link
+            else: res = requests.post(upload_url, files={'file': open('final_video.mp4', 'rb')}, timeout=600); video_link = res.text.strip() if res.text.startswith("http") else video_link
+        except: pass
 
 # --- 6. Notification ---
 payload = {"chat_id": chat_id, "message": "👑 Bhai! Android Tricks Long Video Ready! 🔥", "youtube_url": video_link}
