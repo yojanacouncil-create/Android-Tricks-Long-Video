@@ -1,11 +1,11 @@
-import os, requests, json, subprocess, gc, random, socket
+import os, requests, json, subprocess, gc, random, socket, math
 import urllib.parse
 import urllib3.util.connection as urllib3_cn
 import moviepy.editor as mpe
-from moviepy.editor import VideoFileClip, AudioFileClip, ColorClip, CompositeVideoClip, ImageClip
+from moviepy.editor import VideoFileClip, AudioFileClip, ColorClip, CompositeVideoClip, ImageClip, TextClip
 import moviepy.video.fx.all as vfx
 
-# 🛡️ HACKER TRICK: Force IPv4 to bypass Hostinger "Network is unreachable" block
+# 🛡️ HACKER TRICK: Force IPv4 to bypass Hostinger blocks
 def allowed_gai_family():
     return socket.AF_INET
 urllib3_cn.allowed_gai_family = allowed_gai_family
@@ -19,10 +19,11 @@ resume_url = os.environ.get('RESUME_URL')
 video_title = os.environ.get('TITLE', 'Android Tricks Video')
 thumbnail_prompt = os.environ.get('THUMBNAIL_PROMPT', 'Cinematic tech thumbnail')
 video_desc = os.environ.get('DESCRIPTION', 'Android tips and tricks video.')
-# Updated Telegram Bot Token for Android Tricks
 bot_token = os.environ.get('TELEGRAM_BOT_TOKEN', '8606637548:AAFP7W0koQcXtK1cHNS9pSOorojvSq4fRTg')
 
 TARGET_W, TARGET_H = 1920, 1080
+HINDI_FONT_FILE = "Hindi.ttf"
+
 used_videos = set()
 video_files = []
 audio_files = []
@@ -30,7 +31,6 @@ last_successful_media = None
 
 print(f"Total Scenes to render: {len(scenes_data)}")
 
-# --- Smart Pexels Fetcher ---
 def get_pexels_video(query):
     try:
         res = requests.get(f"https://api.pexels.com/videos/search?query={query}&per_page=15&orientation=landscape", headers={"Authorization": pexels_key}, timeout=15).json()
@@ -44,13 +44,12 @@ def get_pexels_video(query):
     except:
         return None
 
-# --- Main Video Processing Loop (Business Case Study Logic) ---
 for i, scene in enumerate(scenes_data):
     keyword = scene.get('keyword', 'smartphone').strip()
     image_prompt = scene.get('image_prompt', keyword).strip()
     text_line = scene.get('text', ' ').strip() or " "
 
-    # --- 1. Audio Pipeline (Dead-Air Removal + Studio EQ) ---
+    # --- 1. Audio Pipeline ---
     raw_audio_path = f"raw_audio_{i}.mp3"
     norm_audio_path = f"audio_{i}.wav"
     subprocess.run(['edge-tts', '--voice', 'hi-IN-MadhurNeural', '--text', text_line, '--write-media', raw_audio_path])
@@ -72,33 +71,27 @@ for i, scene in enumerate(scenes_data):
 
     audio_files.append(final_audio_path)
 
-    # --- 2. Smart Visual Fetching (Dual-Visual Engine) ---
+    # --- 2. Visual Pipeline ---
     video_url = get_pexels_video(keyword)
     norm_video_path = f"video_{i}.mp4"
     raw_media_path = f"raw_media_{i}.mp4"
+    word_clips = []
     
     try:
         if video_url:
             req = requests.get(video_url, timeout=45)
             with open(raw_media_path, "wb") as f: f.write(req.content)
-            vclip = VideoFileClip(raw_media_path)
-            
-            vclip = vclip.fx(vfx.speedx, 1.2) # Speed Ramp
+            vclip = VideoFileClip(raw_media_path).fx(vfx.speedx, 1.2)
             if vclip.duration < scene_duration:
                 vclip = vclip.fx(vfx.loop, duration=scene_duration)
             else:
                 vclip = vclip.subclip(0, scene_duration)
             last_successful_media = {"type": "video", "path": raw_media_path}
-
         else:
-            # exact matching AI Image
-            print(f"⚠️ Pexels Miss: Generating AI Image for '{image_prompt}'")
             raw_media_path = f"raw_media_{i}.jpg"
-            ai_prompt_encoded = urllib.parse.quote(f"Epic cinematic concept art, {image_prompt}, highly detailed, 8k resolution, Unreal Engine 5 render, dramatic contrast, pure textless photograph, no typography")
+            ai_prompt_encoded = urllib.parse.quote(f"Epic cinematic concept art, {image_prompt}, highly detailed, 8k resolution, Unreal Engine 5 render, dramatic contrast, pure textless photograph")
             img_url = f"https://image.pollinations.ai/prompt/{ai_prompt_encoded}?width=1920&height=1080&nologo=true"
-            
-            req = requests.get(img_url, timeout=45)
-            with open(raw_media_path, "wb") as f: f.write(req.content)
+            with open(raw_media_path, "wb") as f: f.write(requests.get(img_url, timeout=45).content)
             vclip = ImageClip(raw_media_path).set_duration(scene_duration)
             last_successful_media = {"type": "image", "path": raw_media_path}
 
@@ -106,7 +99,6 @@ for i, scene in enumerate(scenes_data):
             vclip = vclip.resize(height=TARGET_H)
         else:
             vclip = vclip.resize(width=TARGET_W)
-            
         vclip = vclip.crop(x_center=vclip.w/2, y_center=vclip.h/2, width=TARGET_W, height=TARGET_H)
         
         motion_type = random.choice(['zoom_in', 'zoom_out'])
@@ -116,30 +108,100 @@ for i, scene in enumerate(scenes_data):
         else:
             z_clip = vclip.resize(lambda t: zoom_factor - (zoom_factor - 1.0) * (t / scene_duration)).set_position(('center', 'center'))
 
-        final_scene = CompositeVideoClip([z_clip], size=(TARGET_W, TARGET_H)).set_duration(scene_duration)
+        # 🔥 UPGRADED ELASTIC BOUNCE SCALE MATH 🔥
+        def advanced_punch_anim(t):
+            if t < 0.06: return 1.6 - 10.0 * t  # Aggressive slam down
+            elif t < 0.15: return 1.0 + 1.2 * (t - 0.06) # Smooth elastic rebound spring
+            return 1.0
+
+        # 🔥 NEW: AFTER EFFECTS STYLE KINETIC IDLE FLOAT POSITIONING 🔥
+        def get_kinetic_pos(base_y, is_shaking, word_idx):
+            def pos(t):
+                # Continuous organic floating mathematical waves (Sine/Cosine curves)
+                idle_y = 7 * math.sin(t * 8 + word_idx)
+                idle_x = 4 * math.cos(t * 6 + word_idx)
+                
+                if is_shaking and t > 0.06:
+                    # Pure frantic earthquake vibration matrix for dangerous keywords
+                    shake_x = 5 * math.sin(t * 75)
+                    shake_y = 5 * math.cos(t * 85)
+                    return (TARGET_W/2 + shake_x + idle_x, base_y + shake_y + idle_y)
+                
+                return (TARGET_W/2 + idle_x, base_y + idle_y)
+            return pos
+
+        dark_overlay = ColorClip(size=(TARGET_W, TARGET_H), color=(0,0,0)).set_opacity(0.38).set_duration(scene_duration)
+        
+        words = text_line.split()
+        
+        if words:
+            duration_per_word = scene_duration / len(words)
+            for w_i, word in enumerate(words):
+                
+                word_lower = word.lower()
+                is_danger = any(kw in word_lower for kw in ['secret', 'trick', 'hidden', 'scam', 'khatarnaak', 'danger', 'alert', 'mat'])
+                is_highlight = not is_danger and len(word) > 5
+                
+                # Dynamic Emphasized Scaling Rules
+                if is_danger:
+                    current_color = '#FF003C' # Neon Crimson Threat Red
+                    base_size = 155
+                    bg_color = 'transparent'
+                elif is_highlight:
+                    current_color = '#000000' # Deep Black Core inside Highlighter
+                    bg_color = random.choice(['#FFD400', '#39FF14']) # Pure Neon Yellow/Green Box
+                    base_size = 140
+                else:
+                    current_color = '#FFFFFF' # Elegant Crisp Clean White
+                    base_size = 90
+                    bg_color = 'transparent'
+
+                try:
+                    text_y_pos = TARGET_H * 0.75 
+                    position_filter = get_kinetic_pos(text_y_pos, is_danger, w_i)
+
+                    if bg_color == 'transparent':
+                        # 1. 3D Outer Layer Drop Shadow (Deep Contrast)
+                        shadow_txt = TextClip(word, fontsize=base_size, color='black', font=HINDI_FONT_FILE, method='caption', size=(1500, None))
+                        shadow_txt = shadow_txt.resize(advanced_punch_anim).set_position(get_kinetic_pos(text_y_pos + 15, is_danger, w_i)).set_duration(duration_per_word).set_start(w_i * duration_per_word)
+                        
+                        # 2. Layer 2: Heavy Black Base Border Outline (Stroke 16)
+                        bg_txt = TextClip(word, fontsize=base_size, color='black', font=HINDI_FONT_FILE, stroke_color='black', stroke_width=16, method='caption', size=(1500, None))
+                        bg_txt = bg_txt.resize(advanced_punch_anim).set_position(position_filter).set_duration(duration_per_word).set_start(w_i * duration_per_word)
+                        
+                        # 3. Layer 3: 🔥 NEW Crisp Inner White Border Highlight Outline (Stroke 4) 🔥
+                        inner_border_txt = TextClip(word, fontsize=base_size, color='black', font=HINDI_FONT_FILE, stroke_color='white', stroke_width=4, method='caption', size=(1500, None))
+                        inner_border_txt = inner_border_txt.resize(advanced_punch_anim).set_position(position_filter).set_duration(duration_per_word).set_start(w_i * duration_per_word)
+                        
+                        # 4. Layer 4: Main Pure Core Color Fill
+                        main_txt = TextClip(word, fontsize=base_size, color=current_color, font=HINDI_FONT_FILE, method='caption', size=(1500, None))
+                        main_txt = main_txt.resize(advanced_punch_anim).set_position(position_filter).set_duration(duration_per_word).set_start(w_i * duration_per_word)
+                        
+                        word_clips.extend([shadow_txt, bg_txt, inner_border_txt, main_txt])
+                    else:
+                        # 📦 HORMOZI HIGHLIGHTER BOX COMPOSITING (Keeps Sticker Structure Clean)
+                        main_txt = TextClip(word, fontsize=base_size, color=current_color, bg_color=bg_color, font=HINDI_FONT_FILE, method='caption', size=(None, None))
+                        main_txt = main_txt.resize(advanced_punch_anim).set_position(position_filter).set_duration(duration_per_word).set_start(w_i * duration_per_word)
+                        word_clips.append(main_txt)
+
+                except Exception as e:
+                    pass
+
+        final_scene = CompositeVideoClip([z_clip, dark_overlay] + word_clips, size=(TARGET_W, TARGET_H)).set_duration(scene_duration)
         final_scene.write_videofile(norm_video_path, fps=24, codec="libx264", audio=False, preset="ultrafast", ffmpeg_params=['-pix_fmt', 'yuv420p', '-vf', 'setsar=1'], logger=None)
 
     except Exception as e:
-        if last_successful_media and os.path.exists(last_successful_media["path"]):
-            if last_successful_media["type"] == "video":
-                fallback_clip = VideoFileClip(last_successful_media["path"]).fx(vfx.loop, duration=scene_duration)
-            else:
-                fallback_clip = ImageClip(last_successful_media["path"]).set_duration(scene_duration)
-            
-            fallback_clip = fallback_clip.resize(height=TARGET_H).crop(x_center=fallback_clip.w/2, y_center=fallback_clip.h/2, width=TARGET_W, height=TARGET_H)
-            z_clip = fallback_clip.resize(lambda t: 1.05 - (0.05) * (t / scene_duration)).set_position(('center', 'center'))
-            final_scene = CompositeVideoClip([z_clip], size=(TARGET_W, TARGET_H)).set_duration(scene_duration)
-            final_scene.write_videofile(norm_video_path, fps=24, codec="libx264", audio=False, preset="ultrafast", ffmpeg_params=['-pix_fmt', 'yuv420p', '-vf', 'setsar=1'], logger=None)
-            fallback_clip.close()
-        else:
-            cclip = ColorClip(size=(TARGET_W, TARGET_H), color=(30, 30, 30)).set_duration(scene_duration)
-            cclip.write_videofile(norm_video_path, fps=24, codec="libx264", audio=False, preset="ultrafast", ffmpeg_params=['-pix_fmt', 'yuv420p', '-vf', 'setsar=1'], logger=None)
-            cclip.close()
+        print(f"Error on scene {i}: {e}")
+        cclip = ColorClip(size=(TARGET_W, TARGET_H), color=(30, 30, 30)).set_duration(scene_duration)
+        cclip.write_videofile(norm_video_path, fps=24, codec="libx264", audio=False, preset="ultrafast", ffmpeg_params=['-pix_fmt', 'yuv420p', '-vf', 'setsar=1'], logger=None)
+        cclip.close()
 
     try:
         vclip.close()
         z_clip.close()
+        dark_overlay.close()
         final_scene.close()
+        for w in word_clips: w.close()
     except: pass
     
     video_files.append(norm_video_path)
@@ -155,7 +217,7 @@ with open("aud_list.txt", "w") as f:
 subprocess.run(['ffmpeg', '-y', '-f', 'concat', '-safe', '0', '-i', 'vid_list.txt', '-c', 'copy', 'merged_video.mp4'], check=True)
 subprocess.run(['ffmpeg', '-y', '-f', 'concat', '-safe', '0', '-i', 'aud_list.txt', '-c', 'copy', 'merged_audio.wav'], check=True)
 
-# --- 4. Final Master Mix (Grade + Ducking + LUFS Normalization + Bottom-Right Text) ---
+# --- 4. Final Master Mix ---
 has_logo = os.path.exists("logo.png")
 has_bgm = os.path.exists("bgm.mp3")
 
@@ -174,7 +236,6 @@ else:
     filter_complex += "[1:a]loudnorm=I=-14:LRA=11:TP=-1.5[a_out]; "
     audio_map = "[a_out]"
 
-# 🔥 WATERMARK SPECIFIC TO THIS CHANNEL 🔥
 channel_name = "Android Tricks"
 filter_complex += f"[0:v]eq=contrast=1.05:saturation=1.15,vignette,noise=alls=1:allf=t+u,drawtext=text='{channel_name}':fontcolor=white@0.6:fontsize=50:x=W-tw-50:y=H-th-50[v_graded]; "
 current_v_map = "[v_graded]"
@@ -196,62 +257,32 @@ ffmpeg_cmd.extend([
 ])
 subprocess.run(ffmpeg_cmd, check=True)
 
-# --- 5. 5-Layer Indestructible Upload System ---
-print("Starting 5-Layer Indestructible Upload System...")
+# --- 5. Upload System ---
 video_link = "Upload Failed"
 
 if not video_link.startswith("http"):
-    try:
-        print("Trying 0x0.st API...")
-        res = requests.post("https://0x0.st", files={'file': open('final_video.mp4', 'rb')}, timeout=600)
-        if res.text.startswith("http"): video_link = res.text.strip()
-    except Exception as e: print(f"0x0.st failed: {e}")
+    try: res = requests.post("https://0x0.st", files={'file': open('final_video.mp4', 'rb')}, timeout=600); video_link = res.text.strip() if res.text.startswith("http") else video_link
+    except: pass
 
 if not video_link.startswith("http"):
-    try:
-        print("Trying Uguu.se API...")
-        res = requests.post("https://uguu.se/upload.php", files={'files[]': open('final_video.mp4', 'rb')}, timeout=600)
-        if res.status_code == 200: video_link = res.json()['files'][0]['url']
-    except Exception as e: print(f"Uguu.se failed: {e}")
+    try: res = requests.post("https://uguu.se/upload.php", files={'files[]': open('final_video.mp4', 'rb')}, timeout=600); video_link = res.json()['files'][0]['url'] if res.status_code == 200 else video_link
+    except: pass
 
 if not video_link.startswith("http"):
-    try:
-        print("Trying Tmpfiles API...")
-        res = requests.post("https://tmpfiles.org/api/v1/upload", files={'file': open('final_video.mp4', 'rb')}, timeout=600)
-        if res.status_code == 200: video_link = res.json()['data']['url'].replace('tmpfiles.org/', 'tmpfiles.org/dl/')
-    except Exception as e: print(f"Tmpfiles failed: {e}")
+    try: res = requests.post("https://tmpfiles.org/api/v1/upload", files={'file': open('final_video.mp4', 'rb')}, timeout=600); video_link = res.json()['data']['url'].replace('tmpfiles.org/', 'tmpfiles.org/dl/') if res.status_code == 200 else video_link
+    except: pass
 
 if not video_link.startswith("http"):
-    try:
-        print("Trying Catbox API...")
-        res = requests.post("https://catbox.moe/user/api.php", data={'reqtype': 'fileupload'}, files={'fileToUpload': open('final_video.mp4', 'rb')}, timeout=600)
-        if res.text.startswith("http"): video_link = res.text.strip()
-    except Exception as e: print(f"Catbox failed: {e}")
+    try: res = requests.post("https://catbox.moe/user/api.php", data={'reqtype': 'fileupload'}, files={'fileToUpload': open('final_video.mp4', 'rb')}, timeout=600); video_link = res.text.strip() if res.text.startswith("http") else video_link
+    except: pass
 
-print(f"🔥 FINAL YOUTUBE LINK: {video_link} 🔥")
-
-# --- 6. Trigger n8n Webhook & Send Telegram Backup ---
-payload = {
-    "chat_id": chat_id, 
-    "message": "👑 Bhai! Android Tricks Long Video Ready! 🔥", 
-    "youtube_url": video_link
-}
-
-safe_headers = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
-    'Accept': 'application/json'
-}
+# --- 6. Notification ---
+payload = {"chat_id": chat_id, "message": "👑 Bhai! Android Tricks Long Video Ready! 🔥", "youtube_url": video_link}
+safe_headers = {'User-Agent': 'Mozilla/5.0 Chrome/123.0.0.0 Safari/537.36', 'Accept': 'application/json'}
 
 if resume_url:
-    print(f"Resuming n8n workflow at: {resume_url}")
-    try:
-        response = requests.post(resume_url, json={"body": payload}, headers=safe_headers, timeout=30)
-        print(f"n8n Resume Response: {response.status_code} - {response.text}")
-    except Exception as e:
-        print(f"Warning: Failed to resume n8n. Error: {e}")
-else:
-    print("No RESUME_URL provided by n8n.")
+    try: requests.post(resume_url, json={"body": payload}, headers=safe_headers, timeout=30)
+    except: pass
 
-# Direct Telegram fallback notification
 final_msg = f"READY_TO_UPLOAD|{video_link}|{video_title}|{thumbnail_prompt}|{video_desc}"
 requests.post(f"https://api.telegram.org/bot{bot_token}/sendMessage", json={"chat_id": chat_id, "text": final_msg})
