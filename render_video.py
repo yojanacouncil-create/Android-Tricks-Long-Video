@@ -49,25 +49,39 @@ for i, scene in enumerate(scenes_data):
     image_prompt = scene.get('image_prompt', keyword).strip()
     text_line = scene.get('text', ' ').strip() or " "
 
-    # --- 1. Audio Pipeline ---
+    # --- 1. BULLETPROOF AUDIO PIPELINE ---
     raw_audio_path = f"raw_audio_{i}.mp3"
     norm_audio_path = f"audio_{i}.wav"
-    subprocess.run(['edge-tts', '--voice', 'hi-IN-MadhurNeural', '--text', text_line, '--write-media', raw_audio_path])
+    
+    try:
+        subprocess.run(['edge-tts', '--voice', 'hi-IN-MadhurNeural', '--text', text_line, '--write-media', raw_audio_path], check=False)
+    except Exception as e:
+        print(f"TTS Engine Warning for scene {i}: {e}")
 
-    if os.path.exists(raw_audio_path):
-        audio_filter = "silenceremove=stop_periods=-1:stop_duration=0.3:stop_threshold=-35dB,bass=g=5:f=110,treble=g=3:f=8000"
-        subprocess.run(['ffmpeg', '-y', '-i', raw_audio_path, '-af', audio_filter, '-ar', '44100', '-ac', '2', norm_audio_path], check=True)
-        out = subprocess.check_output(['ffprobe', '-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', norm_audio_path])
-        scene_duration = float(out.decode('utf-8').strip()) + 0.2 
+    # 🔥 FIX: Check file exists AND size > 0 bytes to prevent FFmpeg crashes
+    if os.path.exists(raw_audio_path) and os.path.getsize(raw_audio_path) > 100:
+        try:
+            audio_filter = "silenceremove=stop_periods=-1:stop_duration=0.3:stop_threshold=-35dB,bass=g=5:f=110,treble=g=3:f=8000"
+            subprocess.run(['ffmpeg', '-y', '-i', raw_audio_path, '-af', audio_filter, '-ar', '44100', '-ac', '2', norm_audio_path], check=True)
+            out = subprocess.check_output(['ffprobe', '-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', norm_audio_path])
+            scene_duration = float(out.decode('utf-8').strip()) + 0.2 
+        except Exception as e:
+            print(f"FFmpeg processing failed for scene {i}: {e}")
+            scene_duration = 3.0
+            subprocess.run(['ffmpeg', '-y', '-f', 'lavfi', '-i', 'anullsrc=r=44100:cl=stereo', '-t', str(scene_duration), norm_audio_path], check=True)
     else:
+        print(f"Empty or missing TTS audio for scene {i}. Generating silent fallback.")
         scene_duration = 3.0
         subprocess.run(['ffmpeg', '-y', '-f', 'lavfi', '-i', 'anullsrc=r=44100:cl=stereo', '-t', str(scene_duration), norm_audio_path], check=True)
 
     final_audio_path = norm_audio_path
     if os.path.exists("whoosh.mp3") and i > 0:
         mixed_audio = f"mixed_audio_{i}.wav"
-        subprocess.run(['ffmpeg', '-y', '-i', norm_audio_path, '-i', 'whoosh.mp3', '-filter_complex', '[0:a][1:a]amix=inputs=2:duration=first:dropout_transition=0[aout]', '-map', '[aout]', '-ar', '44100', '-ac', '2', mixed_audio], check=True)
-        final_audio_path = mixed_audio
+        try:
+            subprocess.run(['ffmpeg', '-y', '-i', norm_audio_path, '-i', 'whoosh.mp3', '-filter_complex', '[0:a][1:a]amix=inputs=2:duration=first:dropout_transition=0[aout]', '-map', '[aout]', '-ar', '44100', '-ac', '2', mixed_audio], check=True)
+            final_audio_path = mixed_audio
+        except:
+            pass
 
     audio_files.append(final_audio_path)
 
@@ -108,21 +122,17 @@ for i, scene in enumerate(scenes_data):
         else:
             z_clip = vclip.resize(lambda t: zoom_factor - (zoom_factor - 1.0) * (t / scene_duration)).set_position(('center', 'center'))
 
-        # 🔥 UPGRADED ELASTIC BOUNCE SCALE MATH 🔥
         def advanced_punch_anim(t):
-            if t < 0.06: return 1.6 - 10.0 * t  # Aggressive slam down
-            elif t < 0.15: return 1.0 + 1.2 * (t - 0.06) # Smooth elastic rebound spring
+            if t < 0.06: return 1.6 - 10.0 * t  
+            elif t < 0.15: return 1.0 + 1.2 * (t - 0.06) 
             return 1.0
 
-        # 🔥 NEW: AFTER EFFECTS STYLE KINETIC IDLE FLOAT POSITIONING 🔥
         def get_kinetic_pos(base_y, is_shaking, word_idx):
             def pos(t):
-                # Continuous organic floating mathematical waves (Sine/Cosine curves)
                 idle_y = 7 * math.sin(t * 8 + word_idx)
                 idle_x = 4 * math.cos(t * 6 + word_idx)
                 
                 if is_shaking and t > 0.06:
-                    # Pure frantic earthquake vibration matrix for dangerous keywords
                     shake_x = 5 * math.sin(t * 75)
                     shake_y = 5 * math.cos(t * 85)
                     return (TARGET_W/2 + shake_x + idle_x, base_y + shake_y + idle_y)
@@ -135,24 +145,23 @@ for i, scene in enumerate(scenes_data):
         words = text_line.split()
         
         if words:
-            duration_per_word = scene_duration / len(words)
+            duration_per_word = scene_duration / max(len(words), 1)
             for w_i, word in enumerate(words):
                 
                 word_lower = word.lower()
                 is_danger = any(kw in word_lower for kw in ['secret', 'trick', 'hidden', 'scam', 'khatarnaak', 'danger', 'alert', 'mat'])
                 is_highlight = not is_danger and len(word) > 5
                 
-                # Dynamic Emphasized Scaling Rules
                 if is_danger:
-                    current_color = '#FF003C' # Neon Crimson Threat Red
+                    current_color = '#FF003C' 
                     base_size = 155
                     bg_color = 'transparent'
                 elif is_highlight:
-                    current_color = '#000000' # Deep Black Core inside Highlighter
-                    bg_color = random.choice(['#FFD400', '#39FF14']) # Pure Neon Yellow/Green Box
+                    current_color = '#000000' 
+                    bg_color = random.choice(['#FFD400', '#39FF14']) 
                     base_size = 140
                 else:
-                    current_color = '#FFFFFF' # Elegant Crisp Clean White
+                    current_color = '#FFFFFF' 
                     base_size = 90
                     bg_color = 'transparent'
 
@@ -161,25 +170,20 @@ for i, scene in enumerate(scenes_data):
                     position_filter = get_kinetic_pos(text_y_pos, is_danger, w_i)
 
                     if bg_color == 'transparent':
-                        # 1. 3D Outer Layer Drop Shadow (Deep Contrast)
                         shadow_txt = TextClip(word, fontsize=base_size, color='black', font=HINDI_FONT_FILE, method='caption', size=(1500, None))
                         shadow_txt = shadow_txt.resize(advanced_punch_anim).set_position(get_kinetic_pos(text_y_pos + 15, is_danger, w_i)).set_duration(duration_per_word).set_start(w_i * duration_per_word)
                         
-                        # 2. Layer 2: Heavy Black Base Border Outline (Stroke 16)
                         bg_txt = TextClip(word, fontsize=base_size, color='black', font=HINDI_FONT_FILE, stroke_color='black', stroke_width=16, method='caption', size=(1500, None))
                         bg_txt = bg_txt.resize(advanced_punch_anim).set_position(position_filter).set_duration(duration_per_word).set_start(w_i * duration_per_word)
                         
-                        # 3. Layer 3: 🔥 NEW Crisp Inner White Border Highlight Outline (Stroke 4) 🔥
                         inner_border_txt = TextClip(word, fontsize=base_size, color='black', font=HINDI_FONT_FILE, stroke_color='white', stroke_width=4, method='caption', size=(1500, None))
                         inner_border_txt = inner_border_txt.resize(advanced_punch_anim).set_position(position_filter).set_duration(duration_per_word).set_start(w_i * duration_per_word)
                         
-                        # 4. Layer 4: Main Pure Core Color Fill
                         main_txt = TextClip(word, fontsize=base_size, color=current_color, font=HINDI_FONT_FILE, method='caption', size=(1500, None))
                         main_txt = main_txt.resize(advanced_punch_anim).set_position(position_filter).set_duration(duration_per_word).set_start(w_i * duration_per_word)
                         
                         word_clips.extend([shadow_txt, bg_txt, inner_border_txt, main_txt])
                     else:
-                        # 📦 HORMOZI HIGHLIGHTER BOX COMPOSITING (Keeps Sticker Structure Clean)
                         main_txt = TextClip(word, fontsize=base_size, color=current_color, bg_color=bg_color, font=HINDI_FONT_FILE, method='caption', size=(None, None))
                         main_txt = main_txt.resize(advanced_punch_anim).set_position(position_filter).set_duration(duration_per_word).set_start(w_i * duration_per_word)
                         word_clips.append(main_txt)
