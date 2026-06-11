@@ -51,40 +51,30 @@ for i, scene in enumerate(scenes_data):
     image_prompt = scene.get('image_prompt', keyword).strip()
     text_line = scene.get('text', ' ').strip() or " "
 
-    # --- 1. GUARANTEED AUDIO PIPELINE (Fixed Corrupt Audio Bug) ---
+    # --- 1. Audio Pipeline ---
     raw_audio_path = f"raw_audio_{i}.mp3"
     norm_audio_path = f"audio_{i}.wav"
-    
-    if len(text_line.strip()) > 1:
-        # Using python -m edge_tts prevents GitHub PATH errors
-        subprocess.run(['python', '-m', 'edge_tts', '--voice', 'hi-IN-MadhurNeural', '--text', text_line, '--write-media', raw_audio_path], check=False)
+    subprocess.run(['edge-tts', '--voice', 'hi-IN-MadhurNeural', '--text', text_line, '--write-media', raw_audio_path], check=False)
 
-    # Check if MP3 was properly generated (more than 50 bytes)
-    if os.path.exists(raw_audio_path) and os.path.getsize(raw_audio_path) > 50:
+    if os.path.exists(raw_audio_path) and os.path.getsize(raw_audio_path) > 100:
         try:
-            # 🔥 FIX: Removed silenceremove that might truncate audio, added loudnorm and forced 16-bit PCM codec
-            audio_filter = "bass=g=5:f=110,treble=g=3:f=8000,loudnorm=I=-14:LRA=11:TP=-1.5"
-            subprocess.run(['ffmpeg', '-y', '-i', raw_audio_path, '-af', audio_filter, '-ar', '44100', '-ac', '2', '-c:a', 'pcm_s16le', norm_audio_path], check=True)
-            
+            audio_filter = "silenceremove=stop_periods=-1:stop_duration=0.3:stop_threshold=-35dB,bass=g=5:f=110,treble=g=3:f=8000"
+            subprocess.run(['ffmpeg', '-y', '-i', raw_audio_path, '-af', audio_filter, '-ar', '44100', '-ac', '2', norm_audio_path], check=True)
             out = subprocess.check_output(['ffprobe', '-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', norm_audio_path])
-            scene_duration = float(out.decode('utf-8').strip())
-        except Exception as e:
-            print(f"FFmpeg processing failed for scene {i}: {e}")
+            # 🔥 FIX 1: Removed +0.2 to perfectly match Global Audio & Video Length
+            scene_duration = float(out.decode('utf-8').strip()) 
+        except:
             scene_duration = 3.0
-            subprocess.run(['ffmpeg', '-y', '-f', 'lavfi', '-i', 'anullsrc=r=44100:cl=stereo', '-t', str(scene_duration), '-c:a', 'pcm_s16le', norm_audio_path], check=True)
+            subprocess.run(['ffmpeg', '-y', '-f', 'lavfi', '-i', 'anullsrc=r=44100:cl=stereo', '-t', str(scene_duration), norm_audio_path], check=True)
     else:
-        print(f"Empty TTS for scene {i}. Generating silent fallback.")
         scene_duration = 3.0
-        subprocess.run(['ffmpeg', '-y', '-f', 'lavfi', '-i', 'anullsrc=r=44100:cl=stereo', '-t', str(scene_duration), '-c:a', 'pcm_s16le', norm_audio_path], check=True)
+        subprocess.run(['ffmpeg', '-y', '-f', 'lavfi', '-i', 'anullsrc=r=44100:cl=stereo', '-t', str(scene_duration), norm_audio_path], check=True)
 
     final_audio_path = norm_audio_path
-    
-    # Add whoosh sound effect flawlessly
     if os.path.exists("whoosh.mp3") and i > 0:
         mixed_audio = f"mixed_audio_{i}.wav"
         try:
-            # 🔥 FIX: Forced pcm_s16le here too so concatenation never breaks
-            subprocess.run(['ffmpeg', '-y', '-i', norm_audio_path, '-i', 'whoosh.mp3', '-filter_complex', '[0:a][1:a]amix=inputs=2:duration=first:dropout_transition=0[aout]', '-map', '[aout]', '-ar', '44100', '-ac', '2', '-c:a', 'pcm_s16le', mixed_audio], check=True)
+            subprocess.run(['ffmpeg', '-y', '-i', norm_audio_path, '-i', 'whoosh.mp3', '-filter_complex', '[0:a][1:a]amix=inputs=2:duration=first:dropout_transition=0[aout]', '-map', '[aout]', '-ar', '44100', '-ac', '2', mixed_audio], check=True)
             final_audio_path = mixed_audio
         except: pass
 
@@ -135,12 +125,12 @@ for i, scene in enumerate(scenes_data):
         danger_timestamps = []
 
         if words:
-            # PERFECT SYNC LOGIC (Word Pacing mapped to actual Audio Length)
+            # 🔥 FIX 2: Smart Subtitle Synchronization (Calculates time per character & pause) 🔥
             word_weights = []
             for w in words:
                 wt = len(w)
-                if w.endswith(','): wt += 4 
-                elif w[-1] in '.?!।': wt += 8 
+                if w.endswith(','): wt += 4 # Commas trigger a short pause
+                elif w[-1] in '.?!।': wt += 8 # Full stops trigger a longer pause
                 word_weights.append(wt)
             
             total_weight = sum(word_weights) if sum(word_weights) > 0 else 1
@@ -151,6 +141,7 @@ for i, scene in enumerate(scenes_data):
                 is_danger = any(kw in word_lower for kw in ['secret', 'trick', 'hidden', 'scam', 'khatarnaak', 'danger', 'alert', 'mat'])
                 is_highlight = not is_danger and len(word) > 5
                 
+                # Accurately mapping text duration to TTS speech length
                 duration_per_word = (word_weights[w_i] / total_weight) * scene_duration
                 
                 if is_danger or is_highlight:
@@ -175,6 +166,7 @@ for i, scene in enumerate(scenes_data):
                         word_clips.append(main_txt)
                 except: pass
                 
+                # Move timeline forward accurately
                 current_time_pos += duration_per_word
 
         def dynamic_opacity(t):
@@ -183,7 +175,7 @@ for i, scene in enumerate(scenes_data):
                     return 0.65 
             return 0.35 
             
-        dark_overlay = ColorClip(size=(TARGET_W, TARGET_H), color=(0,0,0)).set_duration(scene_duration).set_opacity(0.45)
+        dark_overlay = ColorClip(size=(TARGET_W, TARGET_H), color=(0,0,0)).set_duration(scene_duration).set_opacity(0.45) # Keep fixed to avoid function crash
 
         final_scene = CompositeVideoClip([z_clip, dark_overlay] + word_clips, size=(TARGET_W, TARGET_H)).set_duration(scene_duration)
         final_scene.write_videofile(norm_video_path, fps=24, codec="libx264", audio=False, preset="ultrafast", threads=4, ffmpeg_params=['-pix_fmt', 'yuv420p', '-vf', 'setsar=1'], logger=None)
@@ -227,12 +219,11 @@ inputs = 2
 
 if has_bgm:
     ffmpeg_cmd.extend(['-stream_loop', '-1', '-i', 'bgm.mp3'])
-    # Voice Ducking Logic
-    filter_complex += "[1:a]asplit=2[voice_main][voice_control]; [2:a]volume=0.25[bgm_low]; [bgm_low][voice_control]sidechaincompress=threshold=0.08:ratio=8:attack=200:release=1000[ducked_bgm]; [voice_main][ducked_bgm]amix=inputs=2:duration=first[a_out]; "
+    filter_complex += "[1:a]asplit=2[voice_main][voice_control]; [2:a]volume=0.25[bgm_low]; [bgm_low][voice_control]sidechaincompress=threshold=0.08:ratio=8:attack=200:release=1000[ducked_bgm]; [voice_main][ducked_bgm]amix=inputs=2:duration=first,loudnorm=I=-14:LRA=11:TP=-1.5[a_out]; "
     audio_map = "[a_out]"
     inputs += 1
 else:
-    filter_complex += "[1:a]volume=1.0[a_out]; "
+    filter_complex += "[1:a]loudnorm=I=-14:LRA=11:TP=-1.5[a_out]; "
     audio_map = "[a_out]"
 
 channel_name = "Android Tricks"
