@@ -61,7 +61,8 @@ for i, scene in enumerate(scenes_data):
             audio_filter = "silenceremove=stop_periods=-1:stop_duration=0.3:stop_threshold=-35dB,bass=g=5:f=110,treble=g=3:f=8000"
             subprocess.run(['ffmpeg', '-y', '-i', raw_audio_path, '-af', audio_filter, '-ar', '44100', '-ac', '2', norm_audio_path], check=True)
             out = subprocess.check_output(['ffprobe', '-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', norm_audio_path])
-            scene_duration = float(out.decode('utf-8').strip()) + 0.2 
+            # 🔥 FIX 1: Removed +0.2 to perfectly match Global Audio & Video Length
+            scene_duration = float(out.decode('utf-8').strip()) 
         except:
             scene_duration = 3.0
             subprocess.run(['ffmpeg', '-y', '-f', 'lavfi', '-i', 'anullsrc=r=44100:cl=stereo', '-t', str(scene_duration), norm_audio_path], check=True)
@@ -121,13 +122,30 @@ for i, scene in enumerate(scenes_data):
             return pos
 
         words = text_line.split()
+        danger_timestamps = []
 
         if words:
-            duration_per_word = scene_duration / max(len(words), 1)
+            # 🔥 FIX 2: Smart Subtitle Synchronization (Calculates time per character & pause) 🔥
+            word_weights = []
+            for w in words:
+                wt = len(w)
+                if w.endswith(','): wt += 4 # Commas trigger a short pause
+                elif w[-1] in '.?!।': wt += 8 # Full stops trigger a longer pause
+                word_weights.append(wt)
+            
+            total_weight = sum(word_weights) if sum(word_weights) > 0 else 1
+            current_time_pos = 0.0
+
             for w_i, word in enumerate(words):
                 word_lower = word.lower()
                 is_danger = any(kw in word_lower for kw in ['secret', 'trick', 'hidden', 'scam', 'khatarnaak', 'danger', 'alert', 'mat'])
                 is_highlight = not is_danger and len(word) > 5
+                
+                # Accurately mapping text duration to TTS speech length
+                duration_per_word = (word_weights[w_i] / total_weight) * scene_duration
+                
+                if is_danger or is_highlight:
+                    danger_timestamps.append((current_time_pos, current_time_pos + duration_per_word))
 
                 current_color = '#FF003C' if is_danger else ('#000000' if is_highlight else '#FFFFFF')
                 bg_color = 'transparent' if is_danger else (random.choice(['#FFD400', '#39FF14']) if is_highlight else 'transparent')
@@ -138,20 +156,27 @@ for i, scene in enumerate(scenes_data):
                     position_filter = get_kinetic_pos(text_y_pos, is_danger, w_i)
 
                     if bg_color == 'transparent':
-                        shadow_txt = TextClip(word, fontsize=base_size, color='black', font=HINDI_FONT_FILE, method='caption', size=(1500, None)).resize(advanced_punch_anim).set_position(get_kinetic_pos(text_y_pos + 15, is_danger, w_i)).set_duration(duration_per_word).set_start(w_i * duration_per_word)
-                        bg_txt = TextClip(word, fontsize=base_size, color='black', font=HINDI_FONT_FILE, stroke_color='black', stroke_width=16, method='caption', size=(1500, None)).resize(advanced_punch_anim).set_position(position_filter).set_duration(duration_per_word).set_start(w_i * duration_per_word)
-                        inner_border_txt = TextClip(word, fontsize=base_size, color='black', font=HINDI_FONT_FILE, stroke_color='white', stroke_width=4, method='caption', size=(1500, None)).resize(advanced_punch_anim).set_position(position_filter).set_duration(duration_per_word).set_start(w_i * duration_per_word)
-                        main_txt = TextClip(word, fontsize=base_size, color=current_color, font=HINDI_FONT_FILE, method='caption', size=(1500, None)).resize(advanced_punch_anim).set_position(position_filter).set_duration(duration_per_word).set_start(w_i * duration_per_word)
+                        shadow_txt = TextClip(word, fontsize=base_size, color='black', font=HINDI_FONT_FILE, method='caption', size=(1500, None)).resize(advanced_punch_anim).set_position(get_kinetic_pos(text_y_pos + 15, is_danger, w_i)).set_duration(duration_per_word).set_start(current_time_pos)
+                        bg_txt = TextClip(word, fontsize=base_size, color='black', font=HINDI_FONT_FILE, stroke_color='black', stroke_width=16, method='caption', size=(1500, None)).resize(advanced_punch_anim).set_position(position_filter).set_duration(duration_per_word).set_start(current_time_pos)
+                        inner_border_txt = TextClip(word, fontsize=base_size, color='black', font=HINDI_FONT_FILE, stroke_color='white', stroke_width=4, method='caption', size=(1500, None)).resize(advanced_punch_anim).set_position(position_filter).set_duration(duration_per_word).set_start(current_time_pos)
+                        main_txt = TextClip(word, fontsize=base_size, color=current_color, font=HINDI_FONT_FILE, method='caption', size=(1500, None)).resize(advanced_punch_anim).set_position(position_filter).set_duration(duration_per_word).set_start(current_time_pos)
                         word_clips.extend([shadow_txt, bg_txt, inner_border_txt, main_txt])
                     else:
-                        main_txt = TextClip(word, fontsize=base_size, color=current_color, bg_color=bg_color, font=HINDI_FONT_FILE, method='caption', size=(None, None)).resize(advanced_punch_anim).set_position(position_filter).set_duration(duration_per_word).set_start(w_i * duration_per_word)
+                        main_txt = TextClip(word, fontsize=base_size, color=current_color, bg_color=bg_color, font=HINDI_FONT_FILE, method='caption', size=(None, None)).resize(advanced_punch_anim).set_position(position_filter).set_duration(duration_per_word).set_start(current_time_pos)
                         word_clips.append(main_txt)
                 except: pass
+                
+                # Move timeline forward accurately
+                current_time_pos += duration_per_word
 
-        # 🔥 FIXED: Constant Opacity (No crashing functions) 🔥
-        dark_overlay = ColorClip(size=(TARGET_W, TARGET_H), color=(0,0,0)).set_duration(scene_duration).set_opacity(0.45)
+        def dynamic_opacity(t):
+            for start, end in danger_timestamps:
+                if start <= t <= end:
+                    return 0.65 
+            return 0.35 
+            
+        dark_overlay = ColorClip(size=(TARGET_W, TARGET_H), color=(0,0,0)).set_duration(scene_duration).set_opacity(0.45) # Keep fixed to avoid function crash
 
-        # Removed flash_clip to avoid mask crashes
         final_scene = CompositeVideoClip([z_clip, dark_overlay] + word_clips, size=(TARGET_W, TARGET_H)).set_duration(scene_duration)
         final_scene.write_videofile(norm_video_path, fps=24, codec="libx264", audio=False, preset="ultrafast", threads=4, ffmpeg_params=['-pix_fmt', 'yuv420p', '-vf', 'setsar=1'], logger=None)
 
