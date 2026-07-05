@@ -1,4 +1,4 @@
-import os, requests, json, subprocess, gc, random, socket, math
+import os, requests, json, subprocess, gc, random, socket, math, time
 import urllib.parse
 import urllib3.util.connection as urllib3_cn
 import moviepy.editor as mpe
@@ -247,21 +247,33 @@ ffmpeg_cmd.extend([
 ])
 subprocess.run(ffmpeg_cmd, check=True)
 
-# --- 5. Upload System ---
-video_link = "Upload Failed"
-for upload_url in [
-    "https://0x0.st", 
-    "https://uguu.se/upload.php", 
-    "https://tmpfiles.org/api/v1/upload", 
-    "https://catbox.moe/user/api.php"
-]:
-    if not video_link.startswith("http"):
-        try:
-            if "uguu.se" in upload_url: res = requests.post(upload_url, files={'files[]': open('final_video.mp4', 'rb')}, timeout=600); video_link = res.json()['files'][0]['url'] if res.status_code == 200 else video_link
-            elif "tmpfiles" in upload_url: res = requests.post(upload_url, files={'file': open('final_video.mp4', 'rb')}, timeout=600); video_link = res.json()['data']['url'].replace('tmpfiles.org/', 'tmpfiles.org/dl/') if res.status_code == 200 else video_link
-            elif "catbox" in upload_url: res = requests.post(upload_url, data={'reqtype': 'fileupload'}, files={'fileToUpload': open('final_video.mp4', 'rb')}, timeout=600); video_link = res.text.strip() if res.text.startswith("http") else video_link
-            else: res = requests.post(upload_url, files={'file': open('final_video.mp4', 'rb')}, timeout=600); video_link = res.text.strip() if res.text.startswith("http") else video_link
-        except: pass
+# ==========================================
+# 5. GITHUB RELEASES UPLOAD (NEW METHOD)
+# ==========================================
+print("\n🚀 Uploading Video directly to GitHub Releases...")
+
+run_id = os.environ.get('GITHUB_RUN_ID', str(int(time.time())))
+tag_name = f"vid-{run_id}"
+
+# Note: "amu8085-lab/my-project1" ko zarurat anusar apne asali GitHub repo name se badal sakte hain 
+repo_name = os.environ.get('GITHUB_REPOSITORY', "amu8085-lab/my-project1") 
+video_link = None
+
+try:
+    cmd = ['gh', 'release', 'create', tag_name, 'final_video.mp4', '--repo', repo_name, '--notes', 'Automated Video Render']
+    proc = subprocess.run(cmd, capture_output=True, text=True)
+    
+    if proc.returncode == 0:
+        video_link = f"https://github.com/{repo_name}/releases/download/{tag_name}/final_video.mp4"
+        print(f"✅ Success! Video uploaded to GitHub: {video_link}")
+    else:
+        err_msg = proc.stderr.strip()
+        print(f"❌ GitHub Release failed. Error: {err_msg}")
+except Exception as e:
+    print(f"⚠️ Exception during GitHub upload: {str(e)}")
+
+if not video_link:
+    video_link = "Upload Failed"
 
 # --- 6. Notification ---
 payload = {"chat_id": chat_id, "message": "👑 Bhai! Android Tricks Long Video Ready! 🔥", "youtube_url": video_link}
