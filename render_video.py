@@ -24,6 +24,11 @@ bot_token = os.environ.get('TELEGRAM_BOT_TOKEN', '8606637548:AAFP7W0koQcXtK1cHNS
 TARGET_W, TARGET_H = 1920, 1080
 HINDI_FONT_FILE = "Hindi.ttf"
 
+# --- SMART DYNAMIC FALLBACK KEYWORDS ---
+# GitHub Actions se jo bhi fallback theme aayegi, yeh usey list mein badal dega.
+fallback_env = os.environ.get('FALLBACK_KEYWORDS', 'smartphone, technology, mobile screen, digital data, glowing phone')
+FALLBACK_KEYWORDS = [kw.strip() for kw in fallback_env.split(',')]
+
 used_videos = set()
 video_files = []
 audio_files = []
@@ -32,18 +37,37 @@ last_successful_media = None
 print(f"Total Scenes to render: {len(scenes_data)}")
 
 def get_pexels_video(query):
-    try:
-        search_terms = [query, query.split(" ")[-1] if " " in query else query, "smartphone", "technology"]
-        for term in search_terms:
-            res = requests.get(f"https://api.pexels.com/videos/search?query={urllib.parse.quote(term)}&per_page=15&orientation=landscape", headers={"Authorization": pexels_key}, timeout=15).json()
-            if res.get('videos'):
-                for v in res['videos']:
-                    high_res_files = sorted(v['video_files'], key=lambda x: x.get('width', 0), reverse=True)
-                    for vf in high_res_files:
-                        if vf['link'] not in used_videos:
-                            used_videos.add(vf['link'])
-                            return vf['link']
-    except: pass
+    queries_to_try = [query, query.split(" ")[-1] if " " in query else query] + FALLBACK_KEYWORDS
+    for q in queries_to_try:
+        for attempt in range(2):
+            try:
+                time.sleep(random.uniform(0.1, 0.5))
+                # Jab attempts badhein toh safe page=1 rakho taaki khali result na aaye
+                random_page = random.randint(1, 2) if attempt == 0 else 1 
+                url = f"https://api.pexels.com/videos/search?query={urllib.parse.quote(q)}&per_page=15&page={random_page}&orientation=landscape"
+                
+                response = requests.get(url, headers={"Authorization": pexels_key}, timeout=15)
+                
+                # [IMPROVED]: Added Rate Limit (429) Handling
+                if response.status_code == 429:
+                    time.sleep(2)
+                    continue
+                    
+                if response.status_code == 200:
+                    res = response.json()
+                    if res.get('videos') and len(res['videos']) > 0:
+                        for v in res['videos']:
+                            high_res_files = sorted(v['video_files'], key=lambda x: x.get('width', 0), reverse=True)
+                            for vf in high_res_files:
+                                if vf['link'] not in used_videos:
+                                    used_videos.add(vf['link'])
+                                    return vf['link']
+                        
+                        # If all are used, return the best quality of the first video
+                        high_res_files = sorted(res['videos'][0]['video_files'], key=lambda x: x.get('width', 0), reverse=True)
+                        return high_res_files[0]['link']
+            except Exception:
+                continue
     return None
 
 for i, scene in enumerate(scenes_data):
@@ -81,19 +105,40 @@ for i, scene in enumerate(scenes_data):
     audio_files.append(final_audio_path)
 
     # --- 2. Visual Pipeline ---
-    video_url = get_pexels_video(keyword)
     norm_video_path = f"video_{i}.mp4"
     raw_media_path = f"raw_media_{i}.mp4"
     word_clips = []
     
     try:
-        if video_url:
-            req = requests.get(video_url, timeout=45)
-            with open(raw_media_path, "wb") as f: f.write(req.content)
-            vclip = VideoFileClip(raw_media_path).fx(vfx.speedx, 1.2)
-            vclip = vclip.fx(vfx.loop, duration=scene_duration) if vclip.duration < scene_duration else vclip.subclip(0, scene_duration)
-            last_successful_media = {"type": "video", "path": raw_media_path}
-        else:
+        is_valid_video = False
+        video_url = get_pexels_video(keyword)
+        
+        for download_attempt in range(3):  # Download fail ho toh 3 baar retry karega
+            if not video_url:
+                video_url = get_pexels_video(random.choice(FALLBACK_KEYWORDS))
+                
+            if video_url:
+                try:
+                    req = requests.get(video_url, timeout=45)
+                    if req.status_code == 200:
+                        # [IMPROVED]: Increased size threshold to 200KB to strictly avoid corrupt/small files
+                        if len(req.content) > 200000:
+                            with open(raw_media_path, "wb") as f: f.write(req.content)
+                            vclip = VideoFileClip(raw_media_path).fx(vfx.speedx, 1.2)
+                            vclip = vclip.fx(vfx.loop, duration=scene_duration) if vclip.duration < scene_duration else vclip.subclip(0, scene_duration)
+                            last_successful_media = {"type": "video", "path": raw_media_path}
+                            is_valid_video = True
+                            break # Download successful, break out of retry loop
+                        else:
+                            print(f"Video file too small ({len(req.content)} bytes) on attempt {download_attempt+1}, discarding.")
+                except Exception as e:
+                    print(f"Failed to download video for scene {i} on attempt {download_attempt+1}: {str(e)}")
+            
+            video_url = None # Reset kardo taaki next loop mein naya video fetch ho sake
+
+        if not is_valid_video:
+            # AI Image Fallback
+            print(f"⚠️ Generating AI Image for '{image_prompt}'")
             raw_media_path = f"raw_media_{i}.jpg"
             img_url = f"https://image.pollinations.ai/prompt/{urllib.parse.quote(f'Cinematic concept art, {image_prompt}, 8k, Unreal Engine 5')}?width=1920&height=1080&nologo=true"
             with open(raw_media_path, "wb") as f: f.write(requests.get(img_url, timeout=45).content)
@@ -255,8 +300,8 @@ print("\n🚀 Uploading Video directly to GitHub Releases...")
 run_id = os.environ.get('GITHUB_RUN_ID', str(int(time.time())))
 tag_name = f"vid-{run_id}"
 
-# Note: "amu8085-lab/my-project1" ko zarurat anusar apne asali GitHub repo name se badal sakte hain 
-repo_name = os.environ.get('GITHUB_REPOSITORY', "amu8085-lab/my-project1") 
+# Note: Screenshot ke aadhar par repo name update kiya gaya hai 
+repo_name = os.environ.get('GITHUB_REPOSITORY', "yojanacouncil-create/Android-Tricks-Long-Video") 
 video_link = None
 
 try:
