@@ -49,6 +49,10 @@ jobs:
           CHAT_ID: ${{ github.event.client_payload.chat_id }}
           THUMBNAIL_PROMPT: ${{ github.event.client_payload.thumbnail_prompt }}
           RESUME_URL: ${{ github.event.client_payload.resume_url }}
+          
+          # 👇 YAHAN SMART FALLBACK KEYWORDS ADD KIYA GAYA HAI 👇
+          FALLBACK_KEYWORDS: ${{ github.event.client_payload.fallback_keywords }}
+          
           # 🔥 FIX: Yahan Title aur Description map kar diye gaye hain 🔥
           TITLE: ${{ github.event.client_payload.title }}
           DESCRIPTION: ${{ github.event.client_payload.description }}
