@@ -150,13 +150,15 @@ for i, scene in enumerate(scenes_data):
             elif t < 0.15: return 1.0 + 1.2 * (t - 0.06) 
             return 1.0
 
-        # 🔥 ONLY HORIZONTAL ALIGNMENT FIXED HERE ('center') 🔥
+        # 🔥 FIXED POSITION: Left Side Alignment using 15% Screen Width offset 🔥
         def get_kinetic_pos(base_y, is_shaking, word_idx):
             def pos(t):
                 idle_y = 7 * math.sin(t * 8 + word_idx)
+                idle_x = 4 * math.cos(t * 6 + word_idx)
+                left_x_pos = TARGET_W * 0.15 # Texts will appear on the Left Side
                 if is_shaking and t > 0.06:
-                    return ('center', base_y + 5 * math.cos(t * 85) + idle_y)
-                return ('center', base_y + idle_y)
+                    return (left_x_pos + 5 * math.sin(t * 75) + idle_x, base_y + 5 * math.cos(t * 85) + idle_y)
+                return (left_x_pos + idle_x, base_y + idle_y)
             return pos
 
         words = text_line.split()
@@ -191,14 +193,18 @@ for i, scene in enumerate(scenes_data):
                     text_y_pos = TARGET_H * 0.75 
                     position_filter = get_kinetic_pos(text_y_pos, is_danger, w_i)
 
+                    # 🔥 FIXED TEXT CLIPPING: Added spaces (Padding) so Matras never cut off 🔥
+                    display_word = f"  {word}  " 
+
+                    # All TextClips now use size=(None, None) with caption method for tight horizontal boxes
                     if bg_color == 'transparent':
-                        shadow_txt = TextClip(word, fontsize=base_size, color='black', font=HINDI_FONT_FILE, method='caption', size=(1500, None)).resize(advanced_punch_anim).set_position(get_kinetic_pos(text_y_pos + 15, is_danger, w_i)).set_duration(duration_per_word).set_start(current_time_pos)
-                        bg_txt = TextClip(word, fontsize=base_size, color='black', font=HINDI_FONT_FILE, stroke_color='black', stroke_width=16, method='caption', size=(1500, None)).resize(advanced_punch_anim).set_position(position_filter).set_duration(duration_per_word).set_start(current_time_pos)
-                        inner_border_txt = TextClip(word, fontsize=base_size, color='black', font=HINDI_FONT_FILE, stroke_color='white', stroke_width=4, method='caption', size=(1500, None)).resize(advanced_punch_anim).set_position(position_filter).set_duration(duration_per_word).set_start(current_time_pos)
-                        main_txt = TextClip(word, fontsize=base_size, color=current_color, font=HINDI_FONT_FILE, method='caption', size=(1500, None)).resize(advanced_punch_anim).set_position(position_filter).set_duration(duration_per_word).set_start(current_time_pos)
+                        shadow_txt = TextClip(display_word, fontsize=base_size, color='black', font=HINDI_FONT_FILE, method='caption', size=(None, None)).resize(advanced_punch_anim).set_position(get_kinetic_pos(text_y_pos + 15, is_danger, w_i)).set_duration(duration_per_word).set_start(current_time_pos)
+                        bg_txt = TextClip(display_word, fontsize=base_size, color='black', font=HINDI_FONT_FILE, stroke_color='black', stroke_width=16, method='caption', size=(None, None)).resize(advanced_punch_anim).set_position(position_filter).set_duration(duration_per_word).set_start(current_time_pos)
+                        inner_border_txt = TextClip(display_word, fontsize=base_size, color='black', font=HINDI_FONT_FILE, stroke_color='white', stroke_width=4, method='caption', size=(None, None)).resize(advanced_punch_anim).set_position(position_filter).set_duration(duration_per_word).set_start(current_time_pos)
+                        main_txt = TextClip(display_word, fontsize=base_size, color=current_color, font=HINDI_FONT_FILE, method='caption', size=(None, None)).resize(advanced_punch_anim).set_position(position_filter).set_duration(duration_per_word).set_start(current_time_pos)
                         word_clips.extend([shadow_txt, bg_txt, inner_border_txt, main_txt])
                     else:
-                        main_txt = TextClip(word, fontsize=base_size, color=current_color, bg_color=bg_color, font=HINDI_FONT_FILE, method='caption', size=(None, None)).resize(advanced_punch_anim).set_position(position_filter).set_duration(duration_per_word).set_start(current_time_pos)
+                        main_txt = TextClip(display_word, fontsize=base_size, color=current_color, bg_color=bg_color, font=HINDI_FONT_FILE, method='caption', size=(None, None)).resize(advanced_punch_anim).set_position(position_filter).set_duration(duration_per_word).set_start(current_time_pos)
                         word_clips.append(main_txt)
                 except: pass
                 
