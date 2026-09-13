@@ -25,7 +25,6 @@ TARGET_W, TARGET_H = 1920, 1080
 HINDI_FONT_FILE = "Hindi.ttf"
 
 # --- SMART DYNAMIC FALLBACK KEYWORDS ---
-# GitHub Actions se jo bhi fallback theme aayegi, yeh usey list mein badal dega.
 fallback_env = os.environ.get('FALLBACK_KEYWORDS', 'smartphone, technology, mobile screen, digital data, glowing phone')
 FALLBACK_KEYWORDS = [kw.strip() for kw in fallback_env.split(',')]
 
@@ -42,13 +41,11 @@ def get_pexels_video(query):
         for attempt in range(2):
             try:
                 time.sleep(random.uniform(0.1, 0.5))
-                # Jab attempts badhein toh safe page=1 rakho taaki khali result na aaye
                 random_page = random.randint(1, 2) if attempt == 0 else 1 
                 url = f"https://api.pexels.com/videos/search?query={urllib.parse.quote(q)}&per_page=15&page={random_page}&orientation=landscape"
                 
                 response = requests.get(url, headers={"Authorization": pexels_key}, timeout=15)
                 
-                # [IMPROVED]: Added Rate Limit (429) Handling
                 if response.status_code == 429:
                     time.sleep(2)
                     continue
@@ -63,7 +60,6 @@ def get_pexels_video(query):
                                     used_videos.add(vf['link'])
                                     return vf['link']
                         
-                        # If all are used, return the best quality of the first video
                         high_res_files = sorted(res['videos'][0]['video_files'], key=lambda x: x.get('width', 0), reverse=True)
                         return high_res_files[0]['link']
             except Exception:
@@ -85,7 +81,6 @@ for i, scene in enumerate(scenes_data):
             audio_filter = "silenceremove=stop_periods=-1:stop_duration=0.3:stop_threshold=-35dB,bass=g=5:f=110,treble=g=3:f=8000"
             subprocess.run(['ffmpeg', '-y', '-i', raw_audio_path, '-af', audio_filter, '-ar', '44100', '-ac', '2', norm_audio_path], check=True)
             out = subprocess.check_output(['ffprobe', '-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', norm_audio_path])
-            # 🔥 FIX 1: Removed +0.2 to perfectly match Global Audio & Video Length
             scene_duration = float(out.decode('utf-8').strip()) 
         except:
             scene_duration = 3.0
@@ -113,7 +108,7 @@ for i, scene in enumerate(scenes_data):
         is_valid_video = False
         video_url = get_pexels_video(keyword)
         
-        for download_attempt in range(3):  # Download fail ho toh 3 baar retry karega
+        for download_attempt in range(3):
             if not video_url:
                 video_url = get_pexels_video(random.choice(FALLBACK_KEYWORDS))
                 
@@ -121,23 +116,21 @@ for i, scene in enumerate(scenes_data):
                 try:
                     req = requests.get(video_url, timeout=45)
                     if req.status_code == 200:
-                        # [IMPROVED]: Increased size threshold to 200KB to strictly avoid corrupt/small files
                         if len(req.content) > 200000:
                             with open(raw_media_path, "wb") as f: f.write(req.content)
                             vclip = VideoFileClip(raw_media_path).fx(vfx.speedx, 1.2)
                             vclip = vclip.fx(vfx.loop, duration=scene_duration) if vclip.duration < scene_duration else vclip.subclip(0, scene_duration)
                             last_successful_media = {"type": "video", "path": raw_media_path}
                             is_valid_video = True
-                            break # Download successful, break out of retry loop
+                            break
                         else:
                             print(f"Video file too small ({len(req.content)} bytes) on attempt {download_attempt+1}, discarding.")
                 except Exception as e:
                     print(f"Failed to download video for scene {i} on attempt {download_attempt+1}: {str(e)}")
             
-            video_url = None # Reset kardo taaki next loop mein naya video fetch ho sake
+            video_url = None
 
         if not is_valid_video:
-            # AI Image Fallback
             print(f"⚠️ Generating AI Image for '{image_prompt}'")
             raw_media_path = f"raw_media_{i}.jpg"
             img_url = f"https://image.pollinations.ai/prompt/{urllib.parse.quote(f'Cinematic concept art, {image_prompt}, 8k, Unreal Engine 5')}?width=1920&height=1080&nologo=true"
@@ -157,25 +150,24 @@ for i, scene in enumerate(scenes_data):
             elif t < 0.15: return 1.0 + 1.2 * (t - 0.06) 
             return 1.0
 
+        # 🔥 ONLY HORIZONTAL ALIGNMENT FIXED HERE ('center') 🔥
         def get_kinetic_pos(base_y, is_shaking, word_idx):
             def pos(t):
                 idle_y = 7 * math.sin(t * 8 + word_idx)
-                idle_x = 4 * math.cos(t * 6 + word_idx)
                 if is_shaking and t > 0.06:
-                    return (TARGET_W/2 + 5 * math.sin(t * 75) + idle_x, base_y + 5 * math.cos(t * 85) + idle_y)
-                return (TARGET_W/2 + idle_x, base_y + idle_y)
+                    return ('center', base_y + 5 * math.cos(t * 85) + idle_y)
+                return ('center', base_y + idle_y)
             return pos
 
         words = text_line.split()
         danger_timestamps = []
 
         if words:
-            # 🔥 FIX 2: Smart Subtitle Synchronization (Calculates time per character & pause) 🔥
             word_weights = []
             for w in words:
                 wt = len(w)
-                if w.endswith(','): wt += 4 # Commas trigger a short pause
-                elif w[-1] in '.?!।': wt += 8 # Full stops trigger a longer pause
+                if w.endswith(','): wt += 4 
+                elif w[-1] in '.?!।': wt += 8 
                 word_weights.append(wt)
             
             total_weight = sum(word_weights) if sum(word_weights) > 0 else 1
@@ -186,7 +178,6 @@ for i, scene in enumerate(scenes_data):
                 is_danger = any(kw in word_lower for kw in ['secret', 'trick', 'hidden', 'scam', 'khatarnaak', 'danger', 'alert', 'mat'])
                 is_highlight = not is_danger and len(word) > 5
                 
-                # Accurately mapping text duration to TTS speech length
                 duration_per_word = (word_weights[w_i] / total_weight) * scene_duration
                 
                 if is_danger or is_highlight:
@@ -211,7 +202,6 @@ for i, scene in enumerate(scenes_data):
                         word_clips.append(main_txt)
                 except: pass
                 
-                # Move timeline forward accurately
                 current_time_pos += duration_per_word
 
         def dynamic_opacity(t):
@@ -220,7 +210,7 @@ for i, scene in enumerate(scenes_data):
                     return 0.65 
             return 0.35 
             
-        dark_overlay = ColorClip(size=(TARGET_W, TARGET_H), color=(0,0,0)).set_duration(scene_duration).set_opacity(0.45) # Keep fixed to avoid function crash
+        dark_overlay = ColorClip(size=(TARGET_W, TARGET_H), color=(0,0,0)).set_duration(scene_duration).set_opacity(0.45) 
 
         final_scene = CompositeVideoClip([z_clip, dark_overlay] + word_clips, size=(TARGET_W, TARGET_H)).set_duration(scene_duration)
         final_scene.write_videofile(norm_video_path, fps=24, codec="libx264", audio=False, preset="ultrafast", threads=4, ffmpeg_params=['-pix_fmt', 'yuv420p', '-vf', 'setsar=1'], logger=None)
@@ -299,8 +289,6 @@ print("\n🚀 Uploading Video directly to GitHub Releases...")
 
 run_id = os.environ.get('GITHUB_RUN_ID', str(int(time.time())))
 tag_name = f"vid-{run_id}"
-
-# Note: Screenshot ke aadhar par repo name update kiya gaya hai 
 repo_name = os.environ.get('GITHUB_REPOSITORY', "yojanacouncil-create/Android-Tricks-Long-Video") 
 video_link = None
 
