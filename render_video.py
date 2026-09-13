@@ -149,15 +149,15 @@ for i, scene in enumerate(scenes_data):
             elif t < 0.15: return 1.0 + 1.2 * (t - 0.06) 
             return 1.0
 
-        # 🔥 FIXED POSITION: Left Side Alignment (15% from Left Edge) 🔥
+        # 🔥 FIXED POSITION: Right Side Alignment (60% from Left Edge) 🔥
         def get_kinetic_pos(base_y, is_shaking, word_idx):
             def pos(t):
                 idle_y = 7 * math.sin(t * 8 + word_idx)
                 idle_x = 4 * math.cos(t * 6 + word_idx)
-                left_x_pos = TARGET_W * 0.15  # Text set to left side
+                right_x_pos = TARGET_W * 0.60  # Text set to right side
                 if is_shaking and t > 0.06:
-                    return (left_x_pos + 5 * math.sin(t * 75) + idle_x, base_y + 5 * math.cos(t * 85) + idle_y)
-                return (left_x_pos + idle_x, base_y + idle_y)
+                    return (right_x_pos + 5 * math.sin(t * 75) + idle_x, base_y + 5 * math.cos(t * 85) + idle_y)
+                return (right_x_pos + idle_x, base_y + idle_y)
             return pos
 
         words = text_line.split()
@@ -192,7 +192,6 @@ for i, scene in enumerate(scenes_data):
                     text_y_pos = TARGET_H * 0.75 
                     position_filter = get_kinetic_pos(text_y_pos, is_danger, w_i)
 
-                    # 🔥 PADDING APPLIED: No explicit method='caption' or size, allowing auto-width generation 🔥
                     display_word = f"  {word}  " 
 
                     if bg_color == 'transparent':
@@ -265,10 +264,12 @@ else:
     filter_complex += "[1:a]loudnorm=I=-14:LRA=11:TP=-1.5[a_out]; "
     audio_map = "[a_out]"
 
+# 🔥 FIXED WATERMARK: Channel name text moved to Top-Right (y=50) 🔥
 channel_name = "Android Tricks"
-filter_complex += f"[0:v]eq=contrast=1.05:saturation=1.15,vignette,noise=alls=1:allf=t+u,drawtext=text='{channel_name}':fontcolor=white@0.6:fontsize=50:x=W-tw-50:y=H-th-50[v_graded]; "
+filter_complex += f"[0:v]eq=contrast=1.05:saturation=1.15,vignette,noise=alls=1:allf=t+u,drawtext=text='{channel_name}':fontcolor=white@0.6:fontsize=50:x=W-tw-50:y=50[v_graded]; "
 current_v_map = "[v_graded]"
 
+# 🔥 FIXED LOGO: Logo is overlaid at W-w-40:40 (Top-Right edge) 🔥
 if has_logo:
     ffmpeg_cmd.extend(['-i', 'logo.png'])
     filter_complex += f"[{inputs-1}:v]format=rgba,colorchannelmixer=aa=0.85,scale=200:-1[logo]; {current_v_map}[logo]overlay=W-w-40:40[v_out]"
